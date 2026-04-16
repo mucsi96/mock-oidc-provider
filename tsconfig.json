@@ -1,0 +1,10 @@
+{
+  "extends": "@tsconfig/node-ts/tsconfig.json",
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "verbatimModuleSyntax": false,
+    "module": "nodenext",
+    "target": "es2024"
+  },
+  "include": ["src"]
+}

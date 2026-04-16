@@ -1,0 +1,21 @@
+{
+  "name": "mock-oidc-provider",
+  "version": "1.0.0",
+  "description": "Mock OpenID provider for testing",
+  "main": "index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "express": "5.2.1"
+  },
+  "devDependencies": {
+    "@tsconfig/node-ts": "23.6.4",
+    "@types/express": "5.0.6",
+    "@types/node": "22.15.3",
+    "ts-node": "10.9.2",
+    "typescript": "5.8.3"
+  },
+  "author": "",
+  "license": "MIT"
+}
