@@ -1,0 +1,42 @@
+name: Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-publish-${{ github.ref }}
+      cancel-in-progress: true
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get next version
+        id: get_next_version
+        uses: mucsi96/get-next-version@main
+
+      - name: Login to Docker Hub
+        if: steps.get_next_version.outputs.hasNextVersion == 'true'
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | podman login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin docker.io
+
+      - name: Build and push image
+        if: steps.get_next_version.outputs.hasNextVersion == 'true'
+        run: |
+          podman build -t docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mock-oidc-provider:${{ steps.get_next_version.outputs.version }} .
+          podman push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mock-oidc-provider:${{ steps.get_next_version.outputs.version }}
+
+      - name: Create release
+        if: steps.get_next_version.outputs.hasNextVersion == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_next_version.outputs.version }}
+          generate_release_notes: true
