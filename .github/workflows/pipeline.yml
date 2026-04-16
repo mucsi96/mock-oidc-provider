@@ -23,6 +23,8 @@ jobs:
       - name: Get next version
         id: get_next_version
         uses: mucsi96/get-next-version@main
+        with:
+          prefix: 'v'
 
       - name: Login to Docker Hub
         if: steps.get_next_version.outputs.hasNextVersion == 'true'
