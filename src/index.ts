@@ -19,6 +19,7 @@ const name = requireEnv("NAME");
 const roles = requireEnv("ROLES").split(",");
 const scp = requireEnv("SCP");
 const preferredUsername = requireEnv("PREFERRED_USERNAME");
+const aud = requireEnv("AUD");
 
 const app = express();
 app.use((_req, res, next) => {
@@ -131,6 +132,7 @@ app.post(`/${issuerId}/token`, (req, res) => {
       name,
       roles,
       scp,
+      aud,
       nonce: stored.nonce,
     });
 
@@ -196,6 +198,7 @@ app.post(`/${issuerId}/token`, (req, res) => {
     name,
     roles,
     scp,
+    aud,
     nonce: stored.nonce,
   });
 

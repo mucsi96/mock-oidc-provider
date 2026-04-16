@@ -24,6 +24,7 @@ export function createAccessToken(options: {
   name: string;
   roles: string[];
   scp: string;
+  aud: string;
   nonce?: string;
 }): string {
   const now = Math.floor(Date.now() / 1000);
@@ -35,6 +36,7 @@ export function createAccessToken(options: {
   const payload = {
     sub: options.sub,
     scp: options.scp,
+    aud: options.aud,
     nbf: now,
     roles: options.roles,
     iss: options.issuer,
