@@ -35,6 +35,8 @@ jobs:
         run: |
           podman build -t docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mock-oidc-provider:${{ steps.get_next_version.outputs.version }} .
           podman push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mock-oidc-provider:${{ steps.get_next_version.outputs.version }}
+          podman tag docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mock-oidc-provider:${{ steps.get_next_version.outputs.version }} docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mock-oidc-provider:latest
+          podman push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mock-oidc-provider:latest
 
       - name: Create release
         if: steps.get_next_version.outputs.hasNextVersion == 'true'
