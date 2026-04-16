@@ -30,6 +30,11 @@ const authCodes = new Map<
 
 const refreshTokens = new Map<string, { clientId: string; nonce?: string }>();
 
+// Health endpoint
+app.get("/health", (_req, res) => {
+  res.json({ status: "up" });
+});
+
 // Discovery endpoint
 app.get(`/${issuerId}/.well-known/openid-configuration`, (req, res) => {
   const baseUrl = `${req.protocol}://${req.get("host")}/${issuerId}`;
