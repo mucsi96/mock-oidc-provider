@@ -1,2 +1,2 @@
-# mock-oauth2-server
+# mock-oidc-provider
 Mock OpenID provider for testing
