@@ -5,26 +5,36 @@ A lightweight mock OpenID Connect provider for testing. Implements the OIDC Auth
 ## Quick start
 
 ```bash
-podman run -p 8090:8090 docker.io/mucsi96/mock-oidc-provider:1
+podman run -p 8090:8090 \
+  -e PORT=8090 \
+  -e ISSUER_ID=default \
+  -e SUB=test-user \
+  -e NAME="Test User" \
+  -e PREFERRED_USERNAME=test-user@example.com \
+  -e ROLES=reader \
+  -e SCP="read write" \
+  docker.io/mucsi96/mock-oidc-provider:1
 ```
 
-The provider starts immediately with sensible defaults. Verify it's running:
+Verify it's running:
 
 ```bash
-curl http://localhost:8090/default/.well-known/openid-configuration
+curl http://localhost:8090/health
 ```
 
 ## Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `8090` | HTTP server listening port |
-| `ISSUER_ID` | `default` | Issuer identifier, used as the URL path prefix |
-| `SUB` | `test-user` | Subject claim (user ID) in tokens |
-| `NAME` | `Test User` | User's full name claim |
-| `PREFERRED_USERNAME` | `test-user@example.com` | Preferred username claim in the ID token |
-| `ROLES` | `GreetingReader` | Comma-separated list of roles included in the access token |
-| `SCP` | `readGreetings createGreeting` | Space-separated OAuth scopes included in the access token |
+All environment variables are **required**. The provider will refuse to start if any are missing.
+
+| Variable | Description |
+|---|---|
+| `PORT` | HTTP server listening port |
+| `ISSUER_ID` | Issuer identifier, used as the URL path prefix |
+| `SUB` | Subject claim (user ID) in tokens |
+| `NAME` | User's full name claim |
+| `PREFERRED_USERNAME` | Preferred username claim in the ID token |
+| `ROLES` | Comma-separated list of roles included in the access token |
+| `SCP` | Space-separated OAuth scopes included in the access token |
 
 ## Endpoints
 
@@ -36,6 +46,7 @@ All endpoints are prefixed with `/{ISSUER_ID}`:
 | `/{ISSUER_ID}/jwks` | GET | JSON Web Key Set (RSA-2048 public key) |
 | `/{ISSUER_ID}/authorize` | GET | Authorization endpoint (auto-approves, redirects with code) |
 | `/{ISSUER_ID}/token` | POST | Token endpoint (authorization_code and refresh_token grants) |
+| `/health` | GET | Health check endpoint, returns `{"status":"up"}` |
 
 ## Token details
 
@@ -47,50 +58,59 @@ All endpoints are prefixed with `/{ISSUER_ID}`:
 
 The token endpoint returns `access_token`, `id_token`, and `refresh_token` for both `authorization_code` and `refresh_token` grant types.
 
-## Example: Podman pod with your application
+## Example: Podman pod YAML
 
-Run the mock provider alongside your application in a shared pod so they can communicate via `localhost`:
-
-```bash
-# Create a pod exposing your app's port
-podman pod create --name my-app-pod -p 8080:8080
-
-# Start the mock OIDC provider inside the pod
-podman run -d --pod my-app-pod \
-  --name mock-oidc \
-  -e ISSUER_ID=myapp \
-  -e SUB=john.doe \
-  -e NAME="John Doe" \
-  -e PREFERRED_USERNAME=john@example.com \
-  -e ROLES=admin,editor \
-  -e SCP="read write" \
-  docker.io/mucsi96/mock-oidc-provider:1
-
-# Start your application inside the same pod
-# Your app can reach the provider at http://localhost:8090/myapp
-podman run -d --pod my-app-pod \
-  --name my-app \
-  -e OIDC_ISSUER=http://localhost:8090/myapp \
-  my-app-image:latest
-
-# Discovery endpoint is available at:
-# http://localhost:8090/myapp/.well-known/openid-configuration
-```
-
-Within the pod, all containers share the same network namespace, so your application can discover and validate tokens using `http://localhost:8090/myapp` as the issuer.
-
-### Cleanup
-
-```bash
-podman pod stop my-app-pod
-podman pod rm my-app-pod
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-pod
+spec:
+  containers:
+    - name: mock-oidc-provider
+      image: docker.io/mucsi96/mock-oidc-provider:1
+      ports:
+        - containerPort: 8090
+          hostPort: 8090
+      env:
+        - name: PORT
+          value: "8090"
+        - name: ISSUER_ID
+          value: "myapp"
+        - name: SUB
+          value: "john.doe"
+        - name: NAME
+          value: "John Doe"
+        - name: PREFERRED_USERNAME
+          value: "john@example.com"
+        - name: ROLES
+          value: "admin,editor"
+        - name: SCP
+          value: "read write"
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8090
+        initialDelaySeconds: 2
+        periodSeconds: 2
+        failureThreshold: 5
+    - name: my-app
+      image: my-app-image:latest
+      ports:
+        - containerPort: 8080
+          hostPort: 8080
+      env:
+        - name: OIDC_ISSUER
+          value: "http://localhost:8090/myapp"
 ```
 
 ## Running locally without containers
 
 ```bash
 npm ci
-ISSUER_ID=myapp PORT=8090 npm start
+PORT=8090 ISSUER_ID=myapp SUB=test-user NAME="Test User" \
+  PREFERRED_USERNAME=test-user@example.com ROLES=reader SCP="read write" \
+  npm start
 ```
 
 ## License

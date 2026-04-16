@@ -3,18 +3,32 @@ import crypto from "crypto";
 import { getJwks } from "./keys";
 import { createAccessToken, createIdToken } from "./token";
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    console.error(`Missing required environment variable: ${name}`);
+    process.exit(1);
+  }
+  return value;
+}
+
+const issuerId = requireEnv("ISSUER_ID");
+const port = parseInt(requireEnv("PORT"), 10);
+const sub = requireEnv("SUB");
+const name = requireEnv("NAME");
+const roles = requireEnv("ROLES").split(",");
+const scp = requireEnv("SCP");
+const preferredUsername = requireEnv("PREFERRED_USERNAME");
+
 const app = express();
+app.use((_req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  next();
+});
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-
-const issuerId = process.env.ISSUER_ID || "default";
-const port = parseInt(process.env.PORT || "8090", 10);
-const sub = process.env.SUB || "test-user";
-const name = process.env.NAME || "Test User";
-const roles = (process.env.ROLES || "GreetingReader").split(",");
-const scp = process.env.SCP || "readGreetings createGreeting";
-const preferredUsername =
-  process.env.PREFERRED_USERNAME || "test-user@example.com";
 
 const authCodes = new Map<
   string,
@@ -29,6 +43,11 @@ const authCodes = new Map<
 >();
 
 const refreshTokens = new Map<string, { clientId: string; nonce?: string }>();
+
+// Health endpoint
+app.get("/health", (_req, res) => {
+  res.json({ status: "up" });
+});
 
 // Discovery endpoint
 app.get(`/${issuerId}/.well-known/openid-configuration`, (req, res) => {
