@@ -5,26 +5,36 @@ A lightweight mock OpenID Connect provider for testing. Implements the OIDC Auth
 ## Quick start
 
 ```bash
-podman run -p 8090:8090 docker.io/mucsi96/mock-oidc-provider:1
+podman run -p 8090:8090 \
+  -e PORT=8090 \
+  -e ISSUER_ID=default \
+  -e SUB=test-user \
+  -e NAME="Test User" \
+  -e PREFERRED_USERNAME=test-user@example.com \
+  -e ROLES=reader \
+  -e SCP="read write" \
+  docker.io/mucsi96/mock-oidc-provider:1
 ```
 
-The provider starts immediately with sensible defaults. Verify it's running:
+Verify it's running:
 
 ```bash
-curl http://localhost:8090/default/.well-known/openid-configuration
+curl http://localhost:8090/health
 ```
 
 ## Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `8090` | HTTP server listening port |
-| `ISSUER_ID` | `default` | Issuer identifier, used as the URL path prefix |
-| `SUB` | `test-user` | Subject claim (user ID) in tokens |
-| `NAME` | `Test User` | User's full name claim |
-| `PREFERRED_USERNAME` | `test-user@example.com` | Preferred username claim in the ID token |
-| `ROLES` | `GreetingReader` | Comma-separated list of roles included in the access token |
-| `SCP` | `readGreetings createGreeting` | Space-separated OAuth scopes included in the access token |
+All environment variables are **required**. The provider will refuse to start if any are missing.
+
+| Variable | Description |
+|---|---|
+| `PORT` | HTTP server listening port |
+| `ISSUER_ID` | Issuer identifier, used as the URL path prefix |
+| `SUB` | Subject claim (user ID) in tokens |
+| `NAME` | User's full name claim |
+| `PREFERRED_USERNAME` | Preferred username claim in the ID token |
+| `ROLES` | Comma-separated list of roles included in the access token |
+| `SCP` | Space-separated OAuth scopes included in the access token |
 
 ## Endpoints
 
@@ -98,7 +108,9 @@ spec:
 
 ```bash
 npm ci
-ISSUER_ID=myapp PORT=8090 npm start
+PORT=8090 ISSUER_ID=myapp SUB=test-user NAME="Test User" \
+  PREFERRED_USERNAME=test-user@example.com ROLES=reader SCP="read write" \
+  npm start
 ```
 
 ## License
