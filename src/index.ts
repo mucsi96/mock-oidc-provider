@@ -22,10 +22,17 @@ const preferredUsername = requireEnv("PREFERRED_USERNAME");
 const aud = requireEnv("AUD");
 
 const app = express();
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    req.headers["access-control-request-headers"] || "*"
+  );
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
   next();
 });
 app.use(express.urlencoded({ extended: true }));
