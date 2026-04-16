@@ -13,7 +13,8 @@ podman run -p 8090:8090 \
   -e PREFERRED_USERNAME=test-user@example.com \
   -e ROLES=reader \
   -e SCP="read write" \
-  docker.io/mucsi96/mock-oidc-provider:1
+  -e AUD=my-app \
+  docker.io/mucsi96/mock-oidc-provider:latest
 ```
 
 Verify it's running:
@@ -35,6 +36,7 @@ All environment variables are **required**. The provider will refuse to start if
 | `PREFERRED_USERNAME` | Preferred username claim in the ID token |
 | `ROLES` | Comma-separated list of roles included in the access token |
 | `SCP` | Space-separated OAuth scopes included in the access token |
+| `AUD` | Audience claim included in the access token |
 
 ## Endpoints
 
@@ -68,7 +70,7 @@ metadata:
 spec:
   containers:
     - name: mock-oidc-provider
-      image: docker.io/mucsi96/mock-oidc-provider:1
+      image: docker.io/mucsi96/mock-oidc-provider:latest
       ports:
         - containerPort: 8090
           hostPort: 8090
@@ -87,6 +89,8 @@ spec:
           value: "admin,editor"
         - name: SCP
           value: "read write"
+        - name: AUD
+          value: "my-app"
       livenessProbe:
         httpGet:
           path: /health
@@ -102,15 +106,6 @@ spec:
       env:
         - name: OIDC_ISSUER
           value: "http://localhost:8090/myapp"
-```
-
-## Running locally without containers
-
-```bash
-npm ci
-PORT=8090 ISSUER_ID=myapp SUB=test-user NAME="Test User" \
-  PREFERRED_USERNAME=test-user@example.com ROLES=reader SCP="read write" \
-  npm start
 ```
 
 ## License
