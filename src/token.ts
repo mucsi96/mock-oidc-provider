@@ -52,6 +52,7 @@ export function createIdToken(options: {
   issuer: string;
   sub: string;
   name: string;
+  preferredUsername: string;
   nonce?: string;
   aud: string;
 }): string {
@@ -66,6 +67,7 @@ export function createIdToken(options: {
     iss: options.issuer,
     aud: options.aud,
     name: options.name,
+    preferred_username: options.preferredUsername,
     exp: now + 3600,
     iat: now,
     nonce: options.nonce,

@@ -13,6 +13,8 @@ const sub = process.env.SUB || "test-user";
 const name = process.env.NAME || "Test User";
 const roles = (process.env.ROLES || "GreetingReader").split(",");
 const scp = process.env.SCP || "readGreetings createGreeting";
+const preferredUsername =
+  process.env.PREFERRED_USERNAME || "test-user@example.com";
 
 const authCodes = new Map<
   string,
@@ -118,6 +120,7 @@ app.post(`/${issuerId}/token`, (req, res) => {
       issuer,
       sub,
       name,
+      preferredUsername,
       nonce: stored.nonce,
       aud: stored.clientId,
     });
@@ -182,6 +185,7 @@ app.post(`/${issuerId}/token`, (req, res) => {
     issuer,
     sub,
     name,
+    preferredUsername,
     nonce: stored.nonce,
     aud: stored.clientId || client_id,
   });
