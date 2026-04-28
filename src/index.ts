@@ -20,6 +20,7 @@ const roles = requireEnv("ROLES").split(",");
 const scp = requireEnv("SCP");
 const preferredUsername = requireEnv("PREFERRED_USERNAME");
 const aud = requireEnv("AUD");
+const oid = requireEnv("OID");
 
 const app = express();
 app.use((req, res, next) => {
@@ -140,6 +141,7 @@ app.post(`/${issuerId}/token`, (req, res) => {
       roles,
       scp,
       aud,
+      oid,
       nonce: stored.nonce,
     });
 
@@ -149,6 +151,7 @@ app.post(`/${issuerId}/token`, (req, res) => {
       sub,
       name,
       preferredUsername,
+      oid,
       nonce: stored.nonce,
       aud: stored.clientId,
     });
@@ -206,6 +209,7 @@ app.post(`/${issuerId}/token`, (req, res) => {
     roles,
     scp,
     aud,
+    oid,
     nonce: stored.nonce,
   });
 
@@ -215,6 +219,7 @@ app.post(`/${issuerId}/token`, (req, res) => {
     sub,
     name,
     preferredUsername,
+    oid,
     nonce: stored.nonce,
     aud: stored.clientId || client_id,
   });
