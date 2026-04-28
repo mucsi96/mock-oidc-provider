@@ -14,6 +14,7 @@ podman run -p 8090:8090 \
   -e ROLES=reader \
   -e SCP="read write" \
   -e AUD=my-app \
+  -e OID=00000000-0000-0000-0000-000000000000 \
   docker.io/mucsi96/mock-oidc-provider:latest
 ```
 
@@ -37,6 +38,7 @@ All environment variables are **required**. The provider will refuse to start if
 | `ROLES` | Comma-separated list of roles included in the access token |
 | `SCP` | Space-separated OAuth scopes included in the access token |
 | `AUD` | Audience claim included in the access token |
+| `OID` | Object identifier (GUID) claim included in the access token and ID token, immutable identifier for the user/service principal |
 
 ## Endpoints
 
@@ -91,6 +93,8 @@ spec:
           value: "read write"
         - name: AUD
           value: "my-app"
+        - name: OID
+          value: "00000000-0000-0000-0000-000000000000"
       livenessProbe:
         httpGet:
           path: /health
