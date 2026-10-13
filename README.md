@@ -1,6 +1,6 @@
 # mock-oidc-provider
 
-A lightweight mock OpenID Connect provider for testing. Implements the OIDC Authorization Code Flow with PKCE support, auto-approves all authorization requests, and issues signed JWTs — no real identity provider needed.
+A lightweight Rust mock OpenID Connect provider for testing. Implements the OIDC Authorization Code Flow with PKCE support, auto-approves all authorization requests, and issues signed JWTs — no real identity provider needed.
 
 ## Quick start
 

@@ -8,11 +8,27 @@ const oid = '00000000-0000-0000-0000-000000000001';
 
 const health = await fetch(`${base}/health`);
 assert.equal(health.status, 200);
+assert.equal(health.headers.get('access-control-allow-origin'), '*');
 assert.deepEqual(await health.json(), { status: 'up' });
+
+const preflight = await fetch(`${issuer}/token`, {
+  method: 'OPTIONS',
+  headers: {
+    origin: 'https://client.example.invalid',
+    'access-control-request-method': 'POST',
+    'access-control-request-headers': 'authorization,x-test',
+  },
+});
+assert.equal(preflight.status, 204);
+assert.equal(preflight.headers.get('access-control-allow-origin'), '*');
+assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, POST, OPTIONS');
+assert.equal(preflight.headers.get('access-control-allow-headers'), 'authorization,x-test');
 
 const discovery = await fetch(`${issuer}/.well-known/openid-configuration`);
 assert.equal(discovery.status, 200);
 const metadata = await discovery.json();
+assert.deepEqual(metadata.grant_types_supported, ['authorization_code', 'refresh_token']);
+assert.deepEqual(metadata.token_endpoint_auth_methods_supported, ['none']);
 assert.equal(metadata.issuer, issuer);
 assert.equal(metadata.authorization_endpoint, `${issuer}/authorize`);
 assert.equal(metadata.token_endpoint, `${issuer}/token`);
@@ -49,6 +65,16 @@ function tokenRequest(parameters) {
   });
 }
 
+const unsupported = await fetch(`${metadata.authorization_endpoint}?response_type=token`);
+assert.equal(unsupported.status, 400);
+assert.equal((await unsupported.json()).error, 'unsupported_response_type');
+const unsupportedGrant = await tokenRequest({ grant_type: 'password' });
+assert.equal(unsupportedGrant.status, 400);
+assert.equal((await unsupportedGrant.json()).error, 'unsupported_grant_type');
+const unknownCode = await tokenRequest({ grant_type: 'authorization_code', code: 'unknown' });
+assert.equal(unknownCode.status, 400);
+assert.equal((await unknownCode.json()).error, 'invalid_grant');
+
 const verifier = randomBytes(32).toString('base64url');
 const authorize = new URL(metadata.authorization_endpoint);
 authorize.search = new URLSearchParams({
@@ -80,6 +106,9 @@ assert.equal(tokens.token_type, 'Bearer');
 assert.deepEqual(claims(tokens.access_token, 'mock-api').roles, ['reader', 'writer']);
 assert.equal(claims(tokens.access_token, 'mock-api').scp, 'openid profile');
 claims(tokens.id_token, 'mock-client');
+const reusedCode = await tokenRequest({ grant_type: 'authorization_code', code, code_verifier: verifier });
+assert.equal(reusedCode.status, 400);
+assert.equal((await reusedCode.json()).error, 'invalid_grant');
 
 const refreshResponse = await tokenRequest({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token });
 assert.equal(refreshResponse.status, 200);
@@ -91,4 +120,38 @@ const reusedRefresh = await tokenRequest({ grant_type: 'refresh_token', refresh_
 assert.equal(reusedRefresh.status, 400);
 assert.equal((await reusedRefresh.json()).error, 'invalid_grant');
 
-console.log('Verified production-image health, discovery, JWKS, PKCE, signed JWT claims, and refresh-token rotation.');
+const jsonRefresh = await fetch(metadata.token_endpoint, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json; charset=utf-8' },
+  body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: refreshed.refresh_token }),
+});
+assert.equal(jsonRefresh.status, 200);
+const jsonTokens = await jsonRefresh.json();
+claims(jsonTokens.access_token, 'mock-api');
+claims(jsonTokens.id_token, 'mock-client');
+
+const noPkce = new URL(metadata.authorization_endpoint);
+noPkce.search = new URLSearchParams({
+  response_type: 'code',
+  client_id: 'mock-client',
+  redirect_uri: 'https://client.example.invalid/callback?code=old&state=old&keep=value',
+  state: 'test-state',
+  nonce: 'test-nonce',
+});
+const noPkceResponse = await fetch(noPkce, { redirect: 'manual' });
+assert.equal(noPkceResponse.status, 302);
+const noPkceRedirect = new URL(noPkceResponse.headers.get('location'));
+assert.equal(noPkceRedirect.searchParams.getAll('code').length, 1);
+assert.equal(noPkceRedirect.searchParams.get('state'), 'test-state');
+assert.equal(noPkceRedirect.searchParams.get('keep'), 'value');
+const noPkceTokensResponse = await fetch(metadata.token_endpoint, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ grant_type: 'authorization_code', code: noPkceRedirect.searchParams.get('code') }),
+});
+assert.equal(noPkceTokensResponse.status, 200);
+const noPkceTokens = await noPkceTokensResponse.json();
+claims(noPkceTokens.access_token, 'mock-api');
+claims(noPkceTokens.id_token, 'mock-client');
+
+console.log('Verified production-image health, CORS, discovery, JWKS, PKCE, signed JWT claims, form/JSON grants, replay rejection, and refresh-token rotation.');

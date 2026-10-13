@@ -1,17 +1,15 @@
-FROM docker.io/library/node:26-slim AS build-deps
-WORKDIR /usr/src/app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY . ./
+FROM docker.io/library/rust:1.99.0-alpine AS build
+RUN apk add --no-cache musl-dev
+WORKDIR /workspace
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+RUN cargo build --release --locked
 
-FROM docker.io/library/node:26-slim
+FROM docker.io/library/alpine:3.24
 LABEL org.opencontainers.image.source="https://github.com/mucsi96/mock-oidc-provider"
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-COPY --from=build-deps /usr/src/app/package.json ./package.json
-COPY --from=build-deps /usr/src/app/tsconfig.json ./tsconfig.json
-COPY --from=build-deps /usr/src/app/node_modules ./node_modules
-COPY --from=build-deps /usr/src/app/src ./src
+RUN apk add --no-cache curl
+COPY --from=build /workspace/target/release/mock-oidc-provider /usr/local/bin/mock-oidc-provider
 
 EXPOSE 8090
 
-CMD ["npm", "start"]
+ENTRYPOINT ["/usr/local/bin/mock-oidc-provider"]
