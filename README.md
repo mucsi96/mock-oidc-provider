@@ -15,7 +15,7 @@ podman run -p 8090:8090 \
   -e SCP="read write" \
   -e AUD=my-app \
   -e OID=00000000-0000-0000-0000-000000000000 \
-  docker.io/mucsi96/mock-oidc-provider:latest
+  ghcr.io/mucsi96/mock-oidc-provider:latest
 ```
 
 Verify it's running:
@@ -72,7 +72,7 @@ metadata:
 spec:
   containers:
     - name: mock-oidc-provider
-      image: docker.io/mucsi96/mock-oidc-provider:latest
+      image: ghcr.io/mucsi96/mock-oidc-provider:latest
       ports:
         - containerPort: 8090
           hostPort: 8090

@@ -5,6 +5,7 @@ RUN npm ci
 COPY . ./
 
 FROM docker.io/library/node:26-slim
+LABEL org.opencontainers.image.source="https://github.com/mucsi96/mock-oidc-provider"
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 COPY --from=build-deps /usr/src/app/package.json ./package.json
 COPY --from=build-deps /usr/src/app/tsconfig.json ./tsconfig.json
