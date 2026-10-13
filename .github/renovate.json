@@ -3,6 +3,9 @@
   "dependencyDashboard": true,
   "groupName": "all dependencies",
   "groupSlug": "all",
+  "separateMajorMinor": false,
+  "separateMultipleMajor": false,
+  "separateMinorPatch": false,
   "packageRules": [
     {
       "groupName": "all dependencies",
