@@ -26,7 +26,7 @@ curl http://localhost:8090/health
 
 ## Environment variables
 
-All environment variables are **required**. The provider will refuse to start if any are missing.
+The variables below are **required**. The provider will refuse to start if any are missing.
 
 | Variable | Description |
 |---|---|
@@ -61,6 +61,54 @@ All endpoints are prefixed with `/{ISSUER_ID}`:
 - **PKCE:** Supported via S256 challenge method
 
 The token endpoint returns `access_token`, `id_token`, and `refresh_token` for both `authorization_code` and `refresh_token` grant types.
+
+## Confidential-client / BFF fixtures
+
+Set the optional `FIXTURE_CONFIG_FILE` to enable registered clients and a public
+issuer URL behind a TLS reverse proxy such as Traefik. The environment-based mode
+above is used by the existing SPA tests. This is a test provider with disposable
+keys and auto-approval, not a production identity service.
+
+```json
+{
+  "issuer_url": "https://issuer.example.test/default",
+  "access_token_ttl_secs": 5,
+  "clients": {
+    "hello-web": {
+      "secret": "hello-test-secret",
+      "redirect_uri": "https://hello.example.test/oauth2/callback",
+      "api_audience": "hello-api",
+      "api_scope": "api://hello-api/api-access",
+      "allowed_users": ["owner"],
+      "roles": {"owner": ["read"]}
+    }
+  }
+}
+```
+
+This mode requires `client_secret_post`, an exact registered redirect, S256 PKCE,
+state/nonce and the registered API scope. Authorization codes and refresh grants
+are bound to their client. Each API gets its configured audience and user roles;
+`allowed_users` simulates Entra Web-app assignment. `api_audience` and `api_scope`
+can be `null` for a login-gated app that does not consume an API token.
+
+Refresh responses rotate the returned token, while older refresh tokens remain
+usable in this opt-in mode, matching Entra's documented behavior. The default SPA
+mode still rejects reused refresh tokens.
+
+The following control endpoints exist **only** when a fixture config is loaded:
+
+- `POST /test/reset`: `{ "user": "owner", "mode": "normal" }`; resets grants/counters.
+- `POST /test/mode`: `{ "mode": "refresh_outage" }`; changes fault injection.
+- `GET /test/stats`: successful authorization/redemption/refresh counts, no credentials.
+
+Modes cover invalid nonce/signature/audience/issuer/subject, expired or future-dated
+ID tokens, wrong authorized party, HMAC downgrade, missing API roles, and refresh
+revocation/outage/delay. They are exercised by the TypeScript/Playwright Podman
+suite in [oidc-bff](https://github.com/mucsi96/oidc-bff).
+
+`scripts/check-image.sh` verifies both the existing SPA behavior and the registered
+confidential-client grants against the production container image.
 
 ## Example: Podman pod YAML
 
