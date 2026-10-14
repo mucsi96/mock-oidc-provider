@@ -1,3 +1,5 @@
+mod fixture;
+
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
@@ -35,6 +37,7 @@ struct Config {
     scp: String,
     aud: String,
     oid: String,
+    fixture: Option<fixture::Config>,
 }
 
 impl Config {
@@ -47,6 +50,7 @@ impl Config {
         }
 
         Ok(Self {
+            fixture: fixture::Config::load()?,
             port: required("PORT")?
                 .parse()
                 .context("PORT must be a valid TCP port")?,
@@ -66,11 +70,13 @@ impl Config {
 struct Session {
     client_id: Option<String>,
     nonce: Option<String>,
+    subject: Option<String>,
 }
 
 struct AuthorizationCode {
     challenge: Option<String>,
     session: Session,
+    redirect_uri: String,
 }
 
 struct Provider {
@@ -79,6 +85,7 @@ struct Provider {
     jwks: Value,
     codes: Mutex<HashMap<String, AuthorizationCode>>,
     refresh_tokens: Mutex<HashMap<String, Session>>,
+    fixture_state: Mutex<fixture::State>,
 }
 
 impl Provider {
@@ -99,6 +106,7 @@ impl Provider {
             jwks,
             codes: Mutex::new(HashMap::new()),
             refresh_tokens: Mutex::new(HashMap::new()),
+            fixture_state: Mutex::new(fixture::State::default()),
         })
     }
 
@@ -129,28 +137,58 @@ impl Provider {
             .filter(|value| !value.is_empty())
             .cloned()
             .unwrap_or_else(|| random_token(20));
+        let client = self.config.fixture.as_ref().and_then(|config| {
+            config
+                .clients
+                .get(session.client_id.as_deref().unwrap_or_default())
+        });
+        let state = self
+            .fixture_state
+            .lock()
+            .map_err(|_| OAuthError::internal())?;
+        let mode = state.mode;
+        drop(state);
+        let subject = session.subject.as_deref().unwrap_or(&self.config.sub);
+        let lifetime = self
+            .config
+            .fixture
+            .as_ref()
+            .map_or(3600, |config| config.access_token_ttl_secs);
+        let roles = client.map_or_else(
+            || self.config.roles.clone(),
+            |client| client.roles.get(subject).cloned().unwrap_or_default(),
+        );
+        let roles = if mode == fixture::Mode::MissingApiRole {
+            vec![]
+        } else {
+            roles
+        };
+        let audience = client
+            .and_then(|client| client.api_audience.as_deref())
+            .unwrap_or(&self.config.aud);
         let access_token = self.sign(json!({
-            "sub": self.config.sub,
+            "sub": subject,
             "oid": self.config.oid,
             "scp": self.config.scp,
-            "aud": self.config.aud,
+            "aud": audience,
             "nbf": now,
-            "roles": self.config.roles,
+            "roles": roles,
             "iss": issuer,
             "name": self.config.name,
-            "exp": now + 3600,
+            "exp": now + lifetime,
             "iat": now,
             "nonce": nonce,
             "jti": Uuid::new_v4().to_string(),
         }))?;
         let mut id_claims = json!({
-            "sub": self.config.sub,
+            "sub": subject,
             "oid": self.config.oid,
             "iss": issuer,
             "name": self.config.name,
             "preferred_username": self.config.preferred_username,
             "exp": now + 3600,
             "iat": now,
+            "nbf": now,
             "jti": Uuid::new_v4().to_string(),
         });
         if let Some(client_id) = &session.client_id {
@@ -159,7 +197,53 @@ impl Provider {
         if let Some(nonce) = &session.nonce {
             id_claims["nonce"] = json!(nonce);
         }
-        let id_token = self.sign(id_claims)?;
+        if self.config.fixture.is_some() {
+            id_claims["email"] = json!(format!("{subject}@example.test"));
+            id_claims["name"] = json!(if subject == "owner" {
+                "Owner"
+            } else {
+                "Family"
+            });
+            match mode {
+                fixture::Mode::BadNonce => id_claims["nonce"] = json!("another-flow"),
+                fixture::Mode::BadAudience => id_claims["aud"] = json!("another-client"),
+                fixture::Mode::BadIssuer => id_claims["iss"] = json!("https://other.example.test"),
+                fixture::Mode::ExpiredId => id_claims["exp"] = json!(now - 60),
+                fixture::Mode::BadSubject => id_claims["sub"] = json!("another-user"),
+                fixture::Mode::FutureNbf => id_claims["nbf"] = json!(now + 3600),
+                fixture::Mode::FutureIat => id_claims["iat"] = json!(now + 3600),
+                fixture::Mode::BadAzp => id_claims["azp"] = json!("another-client"),
+                _ => {}
+            }
+        }
+        let id_token = if mode == fixture::Mode::HmacId {
+            use hmac::{Hmac, Mac};
+            let header = json!({"alg": "HS256", "typ": "JWT"});
+            let message = format!(
+                "{}.{}",
+                URL_SAFE_NO_PAD
+                    .encode(serde_json::to_vec(&header).map_err(|_| OAuthError::internal())?),
+                URL_SAFE_NO_PAD
+                    .encode(serde_json::to_vec(&id_claims).map_err(|_| OAuthError::internal())?)
+            );
+            let secret = client.ok_or_else(OAuthError::internal)?.secret.as_bytes();
+            let mut mac =
+                Hmac::<Sha256>::new_from_slice(secret).map_err(|_| OAuthError::internal())?;
+            mac.update(message.as_bytes());
+            format!(
+                "{message}.{}",
+                URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+            )
+        } else if mode == fixture::Mode::BadSignature {
+            let signed = self.sign(id_claims)?;
+            format!(
+                "{}.{}",
+                signed.rsplit_once('.').ok_or_else(OAuthError::internal)?.0,
+                URL_SAFE_NO_PAD.encode(b"invalid signature")
+            )
+        } else {
+            self.sign(id_claims)?
+        };
         let refresh_token = random_token(32);
         self.refresh_tokens
             .lock()
@@ -170,7 +254,7 @@ impl Provider {
             "id_token": id_token,
             "refresh_token": refresh_token,
             "token_type": "Bearer",
-            "expires_in": 3600,
+            "expires_in": lifetime,
         }))
     }
 }
@@ -215,12 +299,15 @@ fn random_token(length: usize) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn issuer(headers: &HeaderMap, id: &str) -> Result<String, OAuthError> {
+fn issuer(headers: &HeaderMap, provider: &Provider) -> Result<String, OAuthError> {
+    if let Some(config) = &provider.config.fixture {
+        return Ok(config.issuer_url.clone());
+    }
     let host = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| OAuthError::bad_request("invalid_request"))?;
-    Ok(format!("http://{host}/{id}"))
+    Ok(format!("http://{host}/{}", provider.config.issuer_id))
 }
 
 async fn cors(request: Request, next: Next) -> Response {
@@ -251,7 +338,13 @@ async fn discovery(
     State(provider): State<Arc<Provider>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, OAuthError> {
-    let issuer = issuer(&headers, &provider.config.issuer_id)?;
+    let issuer = issuer(&headers, &provider)?;
+    let hmac = provider
+        .fixture_state
+        .lock()
+        .map_err(|_| OAuthError::internal())?
+        .mode
+        == fixture::Mode::HmacId;
     Ok(Json(json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}/authorize"),
@@ -259,8 +352,8 @@ async fn discovery(
         "jwks_uri": format!("{issuer}/jwks"),
         "response_types_supported": ["code"],
         "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["RS256"],
-        "token_endpoint_auth_methods_supported": ["none"],
+        "id_token_signing_alg_values_supported": if hmac { vec!["RS256", "HS256"] } else { vec!["RS256"] },
+        "token_endpoint_auth_methods_supported": if provider.config.fixture.is_some() { vec!["client_secret_post"] } else { vec!["none"] },
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "scopes_supported": ["openid", "profile", "email"],
@@ -275,6 +368,8 @@ struct Authorize {
     code_challenge: Option<String>,
     nonce: Option<String>,
     state: Option<String>,
+    code_challenge_method: Option<String>,
+    scope: Option<String>,
 }
 
 async fn authorize(
@@ -289,6 +384,49 @@ async fn authorize(
         .as_deref()
         .and_then(|value| Url::parse(value).ok())
         .ok_or_else(|| OAuthError::bad_request("invalid_request"))?;
+    let mut subject = None;
+    if let Some(config) = &provider.config.fixture {
+        let client = config
+            .clients
+            .get(query.client_id.as_deref().unwrap_or_default())
+            .ok_or_else(|| OAuthError::bad_request("invalid_client"))?;
+        if query.redirect_uri.as_deref() != Some(client.redirect_uri.as_str())
+            || query.code_challenge_method.as_deref() != Some("S256")
+            || query.code_challenge.as_ref().is_none_or(String::is_empty)
+            || query.nonce.as_ref().is_none_or(String::is_empty)
+            || query.state.as_ref().is_none_or(String::is_empty)
+        {
+            return Err(OAuthError::bad_request("invalid_request"));
+        }
+        let scopes: Vec<_> = query
+            .scope
+            .as_deref()
+            .unwrap_or_default()
+            .split_whitespace()
+            .collect();
+        if !scopes.contains(&"openid")
+            || !scopes.contains(&"offline_access")
+            || client
+                .api_scope
+                .as_deref()
+                .is_some_and(|scope| !scopes.contains(&scope))
+        {
+            return Err(OAuthError::bad_request("invalid_scope"));
+        }
+        let mut state = provider
+            .fixture_state
+            .lock()
+            .map_err(|_| OAuthError::internal())?;
+        if !client.allowed_users.contains(&state.user) {
+            return Err(OAuthError {
+                status: StatusCode::FORBIDDEN,
+                error: "access_denied",
+                description: None,
+            });
+        }
+        subject = Some(state.user.clone());
+        state.counts.authorizations += 1;
+    }
     let code = random_token(32);
     let replace_state = query.state.as_ref().is_some_and(|value| !value.is_empty());
     let existing: Vec<_> = redirect
@@ -313,10 +451,12 @@ async fn authorize(
         .insert(
             code,
             AuthorizationCode {
+                redirect_uri: query.redirect_uri.unwrap_or_default(),
                 challenge: query.code_challenge.filter(|value| !value.is_empty()),
                 session: Session {
                     client_id: query.client_id.filter(|value| !value.is_empty()),
                     nonce: query.nonce,
+                    subject,
                 },
             },
         );
@@ -334,13 +474,15 @@ struct TokenRequest {
     code_verifier: Option<String>,
     client_id: Option<String>,
     refresh_token: Option<String>,
+    client_secret: Option<String>,
+    redirect_uri: Option<String>,
 }
 
 async fn token(
     State(provider): State<Arc<Provider>>,
     request: Request,
 ) -> Result<Json<Value>, OAuthError> {
-    let issuer = issuer(request.headers(), &provider.config.issuer_id)?;
+    let issuer = issuer(request.headers(), &provider)?;
     let json_body = request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -355,19 +497,61 @@ async fn token(
         serde_urlencoded::from_bytes(&bytes)
             .map_err(|_| OAuthError::bad_request("invalid_request"))?
     };
+    if let Some(config) = &provider.config.fixture {
+        let client = config
+            .clients
+            .get(parameters.client_id.as_deref().unwrap_or_default())
+            .ok_or_else(|| OAuthError::bad_request("invalid_client"))?;
+        if parameters.client_secret.as_deref() != Some(client.secret.as_str()) {
+            return Err(OAuthError::bad_request("invalid_client"));
+        }
+    }
+    let mode = provider
+        .fixture_state
+        .lock()
+        .map_err(|_| OAuthError::internal())?
+        .mode;
     let session = match parameters.grant_type.as_deref() {
-        Some("refresh_token") => provider
-            .refresh_tokens
-            .lock()
-            .map_err(|_| OAuthError::internal())?
-            .remove(parameters.refresh_token.as_deref().unwrap_or_default())
-            .ok_or_else(|| OAuthError::bad_request("invalid_grant"))?,
+        Some("refresh_token") => {
+            if mode == fixture::Mode::RefreshOutage {
+                return Err(OAuthError {
+                    status: StatusCode::SERVICE_UNAVAILABLE,
+                    error: "temporarily_unavailable",
+                    description: None,
+                });
+            }
+            if mode == fixture::Mode::RefreshInvalidGrant {
+                return Err(OAuthError::bad_request("invalid_grant"));
+            }
+            let mut tokens = provider
+                .refresh_tokens
+                .lock()
+                .map_err(|_| OAuthError::internal())?;
+            let value = parameters.refresh_token.as_deref().unwrap_or_default();
+            let session = tokens
+                .get(value)
+                .ok_or_else(|| OAuthError::bad_request("invalid_grant"))?;
+            if provider.config.fixture.is_some() && session.client_id != parameters.client_id {
+                return Err(OAuthError::bad_request("invalid_grant"));
+            }
+            if provider.config.fixture.is_some() {
+                session.clone()
+            } else {
+                tokens.remove(value).ok_or_else(OAuthError::internal)?
+            }
+        }
         Some("authorization_code") => {
             let mut codes = provider.codes.lock().map_err(|_| OAuthError::internal())?;
             let code = parameters.code.as_deref().unwrap_or_default();
             let stored = codes
                 .get(code)
                 .ok_or_else(|| OAuthError::bad_request("invalid_grant"))?;
+            if provider.config.fixture.is_some()
+                && (stored.session.client_id != parameters.client_id
+                    || parameters.redirect_uri.as_deref() != Some(stored.redirect_uri.as_str()))
+            {
+                return Err(OAuthError::bad_request("invalid_grant"));
+            }
             if let Some(challenge) = &stored.challenge {
                 let actual = URL_SAFE_NO_PAD.encode(Sha256::digest(
                     parameters
@@ -392,6 +576,27 @@ async fn token(
         }
         _ => return Err(OAuthError::bad_request("unsupported_grant_type")),
     };
+    if provider.config.fixture.is_some() {
+        let mut state = provider
+            .fixture_state
+            .lock()
+            .map_err(|_| OAuthError::internal())?;
+        if parameters.grant_type.as_deref() == Some("refresh_token") {
+            state.counts.refreshes += 1;
+        } else {
+            state.counts.redemptions += 1;
+        }
+    }
+    if matches!(
+        mode,
+        fixture::Mode::RefreshSlow | fixture::Mode::RefreshSlowInvalidGrant
+    ) && parameters.grant_type.as_deref() == Some("refresh_token")
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    }
+    if mode == fixture::Mode::RefreshSlowInvalidGrant {
+        return Err(OAuthError::bad_request("invalid_grant"));
+    }
     Ok(Json(provider.tokens(session, &issuer)?))
 }
 
@@ -414,7 +619,7 @@ async fn shutdown() {
 async fn main() -> Result<()> {
     let provider = Arc::new(Provider::new(Config::from_env()?)?);
     let base = format!("/{}", provider.config.issuer_id);
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/health", get(|| async { Json(json!({ "status": "up" })) }))
         .route(
             &format!("{base}/.well-known/openid-configuration"),
@@ -425,7 +630,14 @@ async fn main() -> Result<()> {
             get(|State(provider): State<Arc<Provider>>| async move { Json(provider.jwks.clone()) }),
         )
         .route(&format!("{base}/authorize"), get(authorize))
-        .route(&format!("{base}/token"), post(token))
+        .route(&format!("{base}/token"), post(token));
+    if provider.config.fixture.is_some() {
+        app = app
+            .route("/test/reset", post(reset_fixture))
+            .route("/test/mode", post(set_fixture_mode))
+            .route("/test/stats", get(fixture_stats));
+    }
+    let app = app
         .layer(middleware::from_fn(cors))
         .with_state(provider.clone());
     let listener = TcpListener::bind(("0.0.0.0", provider.config.port)).await?;
@@ -437,4 +649,54 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown())
         .await?;
     Ok(())
+}
+
+async fn reset_fixture(
+    State(provider): State<Arc<Provider>>,
+    Json(control): Json<fixture::Control>,
+) -> Result<Json<Value>, OAuthError> {
+    *provider
+        .fixture_state
+        .lock()
+        .map_err(|_| OAuthError::internal())? = fixture::State {
+        mode: control.mode,
+        user: control.user.unwrap_or_else(|| "owner".into()),
+        counts: fixture::Counts::default(),
+    };
+    provider
+        .codes
+        .lock()
+        .map_err(|_| OAuthError::internal())?
+        .clear();
+    provider
+        .refresh_tokens
+        .lock()
+        .map_err(|_| OAuthError::internal())?
+        .clear();
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn set_fixture_mode(
+    State(provider): State<Arc<Provider>>,
+    Json(control): Json<fixture::Control>,
+) -> Result<Json<Value>, OAuthError> {
+    provider
+        .fixture_state
+        .lock()
+        .map_err(|_| OAuthError::internal())?
+        .mode = control.mode;
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn fixture_stats(
+    State(provider): State<Arc<Provider>>,
+) -> Result<Json<fixture::Counts>, OAuthError> {
+    Ok(Json(
+        provider
+            .fixture_state
+            .lock()
+            .map_err(|_| OAuthError::internal())?
+            .counts
+            .clone(),
+    ))
 }

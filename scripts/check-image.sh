@@ -30,3 +30,4 @@ base_url="http://$address"
 curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 1 --max-time 5 \
   "$base_url/health" >/dev/null
 node "$(dirname "$0")/check-oidc.mjs" "$base_url"
+bash "$(dirname "$0")/check-fixture-image.sh" "$image"
